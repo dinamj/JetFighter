@@ -1,0 +1,25 @@
+# Python 3.12 required
+# CUDA >= 12.4 required
+
+# PyTorch with CUDA 12.4 support
+# Installation: pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu124
+# torch==2.4.1
+# torchvision==0.19.1
+# torchaudio==2.4.1
+
+# YOLO11
+ultralytics 
+# ultralytics==8.3.40 ??
+
+# Computer Vision
+opencv-python-headless==4.10.0.84
+Pillow==11.0.0
+
+# CLI + UI
+typer[all]==0.15.1
+rich==14.0.0
+
+# Data Processing + ML
+pandas==2.2.3
+scikit-learn==1.5.2
+numpy==2.1.3
