@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+*.egg-info/
+
+# IDEs
+.idea/
+.vscode/
+*.code-workspace
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data files (large)
+data/pdfs/*.pdf
+data/pages_png/*.png
+data/masked_figures/
+data/jetfighter_images/
+
+# Training images and labels
+data/*/images/**/*.jpg
+data/*/images/**/*.png
+data/*/labels/**/*.txt
+
+# Models and training outputs
+models/*.pt
+models/*/
+
+# Outputs
+outputs/
+*.json
+results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev
+dev/
+*.log
