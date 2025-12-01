@@ -118,13 +118,12 @@ def calculate_distance_matrix(palette_rgb):
     if n == 0:
         return np.array([])
     
-    # Convert to LAB color space
+    # convert to LAB color space
     lab_palette = rgb2lab(palette_rgb.reshape(1, -1, 3) / 255.0).reshape(-1, 3)
     
     dist_matrix = np.zeros((n, n))
     for i in range(n):
         for j in range(i+1, n):
-            # Use CIEDE2000 instead of simple Euclidean distance
             delta_e = deltaE_ciede2000(lab_palette[i], lab_palette[j])
             dist_matrix[i, j] = delta_e
             dist_matrix[j, i] = delta_e
@@ -145,7 +144,7 @@ histogram_filtered = histogram[non_gray_mask]
 print(f"Filtered to {len(palette_rgb_filtered)} non-grayscale colors")
 
 if len(palette_rgb_filtered) < 2:
-    print("No contrast loss detected (insufficient colorful colors)")
+    print("No contrast loss detected")
     sys.exit(0)
 
 palette_sim = simulate_deuteranopia_array(palette_rgb_filtered)
@@ -202,19 +201,6 @@ print(f"Affected Pixels: {affected_pixels} / {total_pixels}")
 print(f"Percentage: {affected_percentage:.2f}%")
 print(f"Contrast Loss: {'YES' if has_contrast_loss else 'NO'}")
 
-if problematic_pairs:
-    print(f"\nTop 10 Problematic Pairs (by ratio):")
-    sorted_pairs = sorted(problematic_pairs, key=lambda x: x['ratio'], reverse=True)[:10]
-    for pair in sorted_pairs:
-        rgb_i_hsv = cv2.cvtColor(np.uint8([[pair['rgb_i']]]), cv2.COLOR_RGB2HSV)[0][0]
-        rgb_j_hsv = cv2.cvtColor(np.uint8([[pair['rgb_j']]]), cv2.COLOR_RGB2HSV)[0][0]
-        print(f"  RGB {pair['rgb_i']} (S:{rgb_i_hsv[1]/255.0:.2f}) ↔ {pair['rgb_j']} (S:{rgb_j_hsv[1]/255.0:.2f}): "
-              f"Ratio {pair['ratio']:.2f}, "
-              f"Orig {pair['dist_orig']:.1f}, Sim {pair['dist_sim']:.1f}, "
-              f"{pair['pixels']} pixels")
-else:
-    print("\nNo problematic pairs found.")
-
 ##### VISUALIZATION #####
 
 if visualize:
@@ -228,7 +214,7 @@ if visualize:
     if has_contrast_loss and problematic_pairs:
         quantized_array = np.array(quantized_img)
         
-        # Build set of problematic palette indices
+        # build set of problematic palette indices
         problematic_filtered_indices = set()
         for pair in problematic_pairs:
             problematic_filtered_indices.add(pair['color_i'])
@@ -236,14 +222,14 @@ if visualize:
         
         mask = np.zeros((h, w), dtype=np.uint8)
         
-        # Map filtered indices back to original palette indices
+        # map filtered indices back to original palette indices
         # and mark corresponding pixels in the mask
         for filtered_idx in problematic_filtered_indices:
             original_idx = np.where(non_gray_mask)[0][filtered_idx]
             pixel_mask = (quantized_array == original_idx)
             mask[pixel_mask] = 255
         
-        # Clean up mask with morphological operations
+        # clean up mask with morphological operations
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.dilate(mask, kernel, iterations=1)
         
