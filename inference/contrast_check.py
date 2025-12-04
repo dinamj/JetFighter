@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from skimage.color import rgb2lab, deltaE_ciede2000
+from scipy.spatial.distance import cdist
 
 ##### CONFIGURATION #####
 
@@ -16,6 +17,7 @@ DEUTERANOPIA_MATRIX = np.array([
 RATIO_THRESHOLD = 5.0
 MIN_DISTANCE_THRESHOLD = 10.0
 PIXEL_PERCENTAGE_THRESHOLD = 5.0
+MAX_SPATIAL_DISTANCE = 1300.0  # pixel
 MAX_PALETTE_COLORS = 256
 
 OUTPUT_DIR = Path("outputs/contrast_detections")
@@ -130,6 +132,25 @@ def calculate_distance_matrix(palette_rgb):
     
     return dist_matrix
 
+##### SPATIAL DISTANCE CALCULATION #####
+
+def calculate_mean_spatial_distance(idx_i, idx_j, quantized_array):
+    coords_i = np.argwhere(quantized_array == idx_i)
+    coords_j = np.argwhere(quantized_array == idx_j)
+    
+    # sample max 100 pixels per color for efficiency
+    if len(coords_i) > 100:
+        coords_i = coords_i[np.random.choice(len(coords_i), 100, replace=False)]
+    if len(coords_j) > 100:
+        coords_j = coords_j[np.random.choice(len(coords_j), 100, replace=False)]
+    
+    if len(coords_i) == 0 or len(coords_j) == 0:
+        return float('inf')
+    
+    # calculate pairwise Euclidean distances
+    dists = cdist(coords_i, coords_j, metric='euclidean')
+    return np.mean(dists)
+
 ##### DETECTION #####
 
 print(f"Analyzing: {input_path.name}")
@@ -154,6 +175,8 @@ dist_sim = calculate_distance_matrix(palette_sim)
 
 ratio_matrix = np.divide(dist_orig, dist_sim + 0.1, where=(dist_sim + 0.1) != 0)
 
+quantized_array = np.array(quantized_img)
+
 problematic_pairs = []
 total_pixels = np.sum(histogram_filtered)
 max_ratio = 0.0
@@ -165,20 +188,29 @@ for i in range(len(palette_rgb_filtered)):
             max_ratio = current_ratio
         
         if current_ratio > RATIO_THRESHOLD and dist_orig[i, j] > MIN_DISTANCE_THRESHOLD:
-            pixel_count_i = histogram_filtered[i]
-            pixel_count_j = histogram_filtered[j]
-            combined_pixels = pixel_count_i + pixel_count_j
+
+            idx_i = np.where(non_gray_mask)[0][i]
+            idx_j = np.where(non_gray_mask)[0][j]
+
+            spatial_dist = calculate_mean_spatial_distance(idx_i, idx_j, quantized_array)
             
-            problematic_pairs.append({
-                'color_i': i,
-                'color_j': j,
-                'ratio': float(current_ratio),
-                'dist_orig': float(dist_orig[i, j]),
-                'dist_sim': float(dist_sim[i, j]),
-                'pixels': int(combined_pixels),
-                'rgb_i': tuple(palette_rgb_filtered[i]),
-                'rgb_j': tuple(palette_rgb_filtered[j])
-            })
+            # only flag as problematic if colors are close together
+            if spatial_dist < MAX_SPATIAL_DISTANCE:
+                pixel_count_i = histogram_filtered[i]
+                pixel_count_j = histogram_filtered[j]
+                combined_pixels = pixel_count_i + pixel_count_j
+                
+                problematic_pairs.append({
+                    'color_i': i,
+                    'color_j': j,
+                    'ratio': float(current_ratio),
+                    'dist_orig': float(dist_orig[i, j]),
+                    'dist_sim': float(dist_sim[i, j]),
+                    'spatial_dist': float(spatial_dist),
+                    'pixels': int(combined_pixels),
+                    'rgb_i': tuple(palette_rgb_filtered[i]),
+                    'rgb_j': tuple(palette_rgb_filtered[j])
+                })
 
 affected_colors = set()
 for pair in problematic_pairs:
