@@ -1,0 +1,17 @@
+# JetFighter
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jetfighter-app
+    ports:
+      - "8000:8000"
+
+    # CUDA
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    restart: unless-stopped

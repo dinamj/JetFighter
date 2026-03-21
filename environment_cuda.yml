@@ -1,0 +1,21 @@
+name: jetfighter
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - torch==2.1.2+cu121
+    - torchvision==0.16.2+cu121
+    - torchaudio==2.1.2+cu121
+    - --extra-index-url https://download.pytorch.org/whl/cu121
+    - ultralytics==8.3.40
+    - opencv-python-headless==4.10.0.84
+    - Pillow==11.0.0
+    - typer[all]==0.15.1
+    - rich==14.0.0
+    - pandas==2.2.3
+    - scikit-learn==1.5.2
+    - scikit-image==0.24.0
+    - numpy==2.1.3

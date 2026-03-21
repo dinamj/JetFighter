@@ -1,0 +1,41 @@
+# Data + other stuff
+data/
+outputs/
+training/
+Release-25.12.0-0/
+
+# Model training runs (keep only weights)
+models/detector_training/
+models/detector2_training/yolo_detector/*.png
+models/detector2_training/yolo_detector/*.jpg
+models/detector2_training/yolo_detector/*.csv
+models/detector2_training/yolo_detector/*.yaml
+models/histogram_training1/
+models/histogram_training2/
+models/histogram_training3/run_*/metrics.json
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# Node
+jetfighter-monorepo/frontend/node_modules/
+jetfighter-monorepo/frontend/dist/
+
+# Backend runtime artifacts
+jetfighter-monorepo/backend/static/
+
+# IDE / OS
+.git/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Conda
+environment*.yml
+*.yml.bak
