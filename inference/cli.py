@@ -16,7 +16,6 @@ import csv
 import cv2
 import tempfile
 import shutil
-import numpy as np
 from pathlib import Path
 from argparse import ArgumentParser
 
@@ -162,7 +161,7 @@ def write_csv_report(all_results, output_path):
     fieldnames = [
         "file", "page", "figure_id",
         "category", "status", "reason",
-        "classification", "classification_confidence",
+        "classification", "classification_source", "classification_confidence",
         "detection_confidence",
         "n_problematic_pairs", "n_colors",
     ]
@@ -179,6 +178,7 @@ def write_csv_report(all_results, output_path):
                 "status": "PROBLEMATIC" if fig["status"] == "red" else "OK",
                 "reason": fig["reason"],
                 "classification": fig["classification"],
+                "classification_source": fig.get("classification_source", "unknown"),
                 "classification_confidence": round(fig["classification_confidence"], 4),
                 "detection_confidence": fig.get("detection_confidence", ""),
                 "n_problematic_pairs": len(cd.get("problematic_pairs", [])),
@@ -282,6 +282,12 @@ def main():
             # Single image: no detection, classify whole image
             result = pipeline.analyze_image(str(file_path))
 
+            # Guardrail: image mode must stay exactly one full-image figure.
+            if len(result.get("figures", [])) > 1:
+                print(f"  WARNING: Expected 1 figure in image mode, got {len(result['figures'])}; keeping first figure only")
+                result["figures"] = [result["figures"][0]]
+                result["num_figures"] = 1
+
             for fig in result["figures"]:
                 fig["figure_id"] = global_fig_id
                 global_fig_id += 1
@@ -294,8 +300,12 @@ def main():
 
             for fig in result["figures"]:
                 status_str = "PROBLEMATIC" if fig["status"] == "red" else "OK"
+                src_str = fig.get("classification_source", "unknown")
                 print(f"  {CATEGORY_LABELS.get(fig['category'], fig['category'])} "
-                      f"({status_str}, conf={fig['classification_confidence']:.1%})")
+                    f"({status_str}, conf={fig['classification_confidence']:.1%}, src={src_str})")
+                cd = fig.get("contrast_details")
+                if cd and "problematic_pairs" in cd:
+                    print(f"    Contrast: {cd['verdict']} | pairs={len(cd['problematic_pairs'])}")
 
             if args.visualize:
                 img = cv2.imread(str(file_path))

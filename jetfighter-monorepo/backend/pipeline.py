@@ -77,7 +77,21 @@ CATEGORY_INFO = {
 
 # Histogram Classifier Settings
 HISTOGRAM_BINS = 8  # 8x8x8 = 512 features
-HISTOGRAM_RESIZE = 1280
+try:
+    HISTOGRAM_RESIZE = max(128, int(os.environ.get("HISTOGRAM_RESIZE", "512")))
+except ValueError:
+    HISTOGRAM_RESIZE = 512
+
+# Spatial pre-filter for edge detection before histogram classification (to catch highly discrete figures liek ishihara plates)
+SPATIAL_PREFILTER_SIZE = 256
+SPATIAL_PREFILTER_GRID = 8
+SPATIAL_PREFILTER_BORDER_FRAC = 0.08
+SPATIAL_CANNY_LOW = 80
+SPATIAL_CANNY_HIGH = 180
+SPATIAL_EDGE_DENSITY_THRESHOLD = 0.085
+SPATIAL_ACTIVE_TILE_DENSITY = 0.04
+SPATIAL_ACTIVE_TILE_RATIO_THRESHOLD = 0.45
+SPATIAL_VERY_HIGH_EDGE_DENSITY = 0.14
 
 
 ### HISTOGRAM CLASSIFIER MODEL
@@ -101,32 +115,90 @@ class ColorClassifier(nn.Module):
         return self.net(x)
 
 
-def extract_histogram(crop_rgb, bins=8, resize=1280):
-    from PIL import Image
-    
-    # Convert to PIL and resize
-    img = Image.fromarray(crop_rgb)
+def extract_histogram(crop_rgb, bins=8, resize=512):
     if resize and resize > 0:
-        img = img.resize((resize, resize))
-    
-    arr = np.array(img)
-    
-    # Compute 3D Histogram
-    hist, _ = np.histogramdd(
-        arr.reshape(-1, 3), 
-        bins=(bins, bins, bins), 
-        range=((0, 256), (0, 256), (0, 256))
-    )
-    
-    # Remove white pixels (removed as well during training)
-    hist[bins-1, bins-1, bins-1] = 0.0
-    
-    # Normalize
-    hist_sum = np.sum(hist)
+        h, w = crop_rgb.shape[:2]
+        if h != resize or w != resize:
+            interp = cv2.INTER_AREA if (h > resize or w > resize) else cv2.INTER_LINEAR
+            crop_rgb = cv2.resize(crop_rgb, (resize, resize), interpolation=interp)
+
+    hist = cv2.calcHist(
+        [crop_rgb],
+        [0, 1, 2],
+        None,
+        [bins, bins, bins],
+        [0, 256, 0, 256, 0, 256],
+    ).astype(np.float32)
+
+    # Remove white bin (same convention as training)
+    hist[bins - 1, bins - 1, bins - 1] = 0.0
+
+    hist_sum = float(hist.sum())
     if hist_sum > 0:
-        hist = hist / hist_sum
-    
+        hist /= hist_sum
+
     return hist.flatten()
+
+
+def _spatial_prefilter_confidence(edge_density, active_tile_ratio):
+    # Maps spatial filter strength to a bounded confidence for transparency
+    density_norm = min(edge_density / max(SPATIAL_VERY_HIGH_EDGE_DENSITY, 1e-6), 1.0)
+    spread_norm = min(active_tile_ratio / max(SPATIAL_ACTIVE_TILE_RATIO_THRESHOLD, 1e-6), 1.0)
+    conf = 0.72 + 0.14 * density_norm + 0.14 * spread_norm
+    return float(np.clip(conf, 0.72, 0.96))
+
+
+def edge_detection(crop_bgr):
+    # Spatial pre-filter for edge detection before histogram classification (to catch highly discrete figures liek ishihara plates)
+    if crop_bgr is None or crop_bgr.size == 0:
+        return False, 0.0, 0.0
+
+    small = cv2.resize(crop_bgr,
+                       (SPATIAL_PREFILTER_SIZE, SPATIAL_PREFILTER_SIZE),
+                       interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(gray, SPATIAL_CANNY_LOW, SPATIAL_CANNY_HIGH, L2gradient=True)
+
+    edge_mask = edges > 0
+
+    margin = int(SPATIAL_PREFILTER_SIZE * SPATIAL_PREFILTER_BORDER_FRAC)
+    if margin > 0:
+        inner = edge_mask[margin:-margin, margin:-margin]
+        if inner.size == 0:
+            inner = edge_mask
+    else:
+        inner = edge_mask
+
+    edge_density = float(np.mean(inner))
+
+    h, w = inner.shape
+    active_tiles = 0
+    total_tiles = 0
+    for gy in range(SPATIAL_PREFILTER_GRID):
+        y0 = (gy * h) // SPATIAL_PREFILTER_GRID
+        y1 = ((gy + 1) * h) // SPATIAL_PREFILTER_GRID
+        for gx in range(SPATIAL_PREFILTER_GRID):
+            x0 = (gx * w) // SPATIAL_PREFILTER_GRID
+            x1 = ((gx + 1) * w) // SPATIAL_PREFILTER_GRID
+            tile = inner[y0:y1, x0:x1]
+            if tile.size == 0:
+                continue
+            total_tiles += 1
+            if float(np.mean(tile)) >= SPATIAL_ACTIVE_TILE_DENSITY:
+                active_tiles += 1
+
+    active_tile_ratio = active_tiles / max(total_tiles, 1)
+
+    is_discrete = (
+        edge_density >= SPATIAL_VERY_HIGH_EDGE_DENSITY or
+        (
+            edge_density >= SPATIAL_EDGE_DENSITY_THRESHOLD and
+            active_tile_ratio >= SPATIAL_ACTIVE_TILE_RATIO_THRESHOLD
+        )
+    )
+
+    return is_discrete, edge_density, active_tile_ratio
 
 
 ### CONTRAST ANALYSIS HELPERS
@@ -351,10 +423,19 @@ class JetFighterPipeline:
 
     # Step 2: Classification
     def _classify(self, crop_bgr):
-        """Returns (class_name, confidence, probabilities_dict)."""
+        is_discrete, edge_density, active_tile_ratio = edge_detection(crop_bgr)
+        if is_discrete:
+            conf = round(_spatial_prefilter_confidence(edge_density, active_tile_ratio), 4)
+            residual = max(0.0, 1.0 - conf)
+            return "discrete", conf, {
+                "rainbow_gradient": round(residual * 0.5, 4),
+                "safe_gradient": round(residual * 0.5, 4),
+                "discrete": conf,
+            }, "spatial_prefilter"
+
         if self.classifier is None:
             print("[Pipeline] ERROR: No classifier model loaded.")
-            return "unknown", 0.0, {}
+            return "unknown", 0.0, {}, "none"
 
         crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
         
@@ -374,8 +455,8 @@ class JetFighterPipeline:
             prob_dict = {}
             for i, class_name in CLASS_NAMES.items():
                 prob_dict[class_name] = round(float(probs[i].cpu()), 4)
-        
-        return name, conf, prob_dict
+
+        return name, conf, prob_dict, "mlp"
 
     # Full page pipeline
     def analyze_page(self, image_path):
@@ -399,7 +480,7 @@ class JetFighterPipeline:
             if crop.size == 0:
                 continue
 
-            cls_name, cls_conf, cls_probs = self._classify(crop)
+            cls_name, cls_conf, cls_probs, cls_source = self._classify(crop)
 
             contrast = None
             if cls_name == "discrete":
@@ -422,6 +503,7 @@ class JetFighterPipeline:
                 status=info["status"],
                 reason=reason,
                 classification=cls_name,
+                classification_source=cls_source,
                 classification_confidence=round(cls_conf, 4),
                 classification_probabilities=cls_probs,
                 detection_confidence=det["confidence"],
@@ -446,7 +528,7 @@ class JetFighterPipeline:
         h, w = img.shape[:2]
 
         # Classify the whole image as one figure
-        cls_name, cls_conf, cls_probs = self._classify(img)
+        cls_name, cls_conf, cls_probs, cls_source = self._classify(img)
 
         contrast = None
         if cls_name == "discrete":
@@ -469,6 +551,7 @@ class JetFighterPipeline:
             status=info["status"],
             reason=reason,
             classification=cls_name,
+            classification_source=cls_source,
             classification_confidence=round(cls_conf, 4),
             classification_probabilities=cls_probs,
             detection_confidence=1.0,
